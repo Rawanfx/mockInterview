@@ -1,15 +1,12 @@
-import whisper
 import tempfile
 import os
+from groq import Groq
 from models import SpeechResult
+
+client = Groq()
 
 
 class SpeechAnalyzer:
-    def __init__(self):
-        # "base" is faster and still accurate enough for WPM/pauses.
-        # Switch to "small" or "medium" if you need better Arabic support.
-        self.model = whisper.load_model("small")
-
     def transcribe(self, audio_bytes: bytes) -> SpeechResult:
         try:
             with tempfile.NamedTemporaryFile(
@@ -17,15 +14,21 @@ class SpeechAnalyzer:
                 tmp.write(audio_bytes)
                 tmp_path = tmp.name
 
-            result = self.model.transcribe(tmp_path, fp16=False)
+            with open(tmp_path, "rb") as f:
+                result = client.audio.transcriptions.create(
+                    file=f,
+                    model="whisper-large-v3-turbo",
+                    response_format="verbose_json",
+                )
+
             os.unlink(tmp_path)
 
             metrics = self._extract_metrics(result)
 
             return SpeechResult(
                 success=True,
-                text=result["text"].strip(),
-                language=result["language"],
+                text=result.text.strip(),
+                language=result.language,
                 words_per_minute=metrics["words_per_minute"],
                 pause_count=metrics["pause_count"],
                 clarity_score=metrics["clarity_score"],
@@ -48,8 +51,8 @@ class SpeechAnalyzer:
     # Private helpers
     # ─────────────────────────────────────────────
 
-    def _extract_metrics(self, result: dict) -> dict:
-        segments = result.get("segments", [])
+    def _extract_metrics(self, result) -> dict:
+        segments = getattr(result, "segments", []) or []
 
         if not segments:
             return {
@@ -79,7 +82,7 @@ class SpeechAnalyzer:
         else:
             pace = "too_fast"
 
-        # ── Pauses (gaps > 2 s between segments) ─
+        # ── Pauses (gaps > 2s between segments) ──
         pause_count = sum(
             1
             for i in range(1, len(segments))
@@ -98,21 +101,43 @@ class SpeechAnalyzer:
 
     def _calculate_clarity(self, segments: list) -> float:
         """
-        FIX: avg_logprob is negative. Closer to 0 = clearer speech.
+        avg_logprob is negative. Closer to 0 = clearer speech.
         Typical range: -0.2 (very clear) to -1.0+ (unclear/noise).
 
-        We map it to 0-100 using a clamped linear scale:
+        Map [-1.0, 0.0] → [0, 100]:
           -0.0  → 100
-          -0.2  →  80   (good interview speech)
+          -0.2  →  80  (good interview speech)
           -0.5  →  50
           -1.0  →   0
-          < -1.0 → clamped to 0
-
-        We average the RAW (negative) logprobs, not their abs values.
         """
-        raw_logprobs = [s.get("avg_logprob", -1.0) for s in segments]
+        valid = [
+            s for s in segments
+            if s.get("avg_logprob") is not None
+        ]
+
+        if not valid:
+            return self._clarity_fallback(segments)
+
+        raw_logprobs = [s["avg_logprob"] for s in valid]
         avg_logprob = sum(raw_logprobs) / len(raw_logprobs)  # negative number
 
-        # Map [-1.0, 0.0] → [0, 100]; clamp outside this range
-        score = (avg_logprob + 1.0) * 100.0   # -1→0, 0→100
+        score = (avg_logprob + 1.0) * 100.0
         return round(max(0.0, min(100.0, score)), 2)
+
+    def _clarity_fallback(self, segments: list) -> float:
+        """
+        لو avg_logprob مش موجود لأي سبب —
+        بنحسب clarity من عدد الكلمات الغير واضحة.
+        """
+        if not segments:
+            return 0.0
+
+        unclear_markers = ["[inaudible]", "[unclear]", "...", " uh ", " um "]
+        unclear_count = sum(
+            1 for s in segments
+            for marker in unclear_markers
+            if marker in s.get("text", "").lower()
+        )
+
+        unclear_ratio = unclear_count / len(segments)
+        return round(max(0.0, min(100.0, (1 - unclear_ratio) * 100)), 2)
