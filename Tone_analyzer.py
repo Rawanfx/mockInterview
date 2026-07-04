@@ -67,7 +67,7 @@ class ToneAnalyzer:
 
             tone_features = self._extract_tone_features(y, sr)
             emotion_result = self._classify_emotion_chunked(y, sr)
-            strain_score  = self._calculate_strain(tone_features)
+            strain_score  = self._calculate_strain(emotion_result["emotion_scores"])
 
             return ToneResult(
                 success=True,
@@ -191,14 +191,26 @@ class ToneAnalyzer:
             "emotion_scores":   emotion_scores,
         }
 
-    def _calculate_strain(self, tone_features: dict) -> float:
+    def _calculate_strain(self, emotion_scores: dict) -> float:
         """
-        Strain score (0–100): proxy for vocal stress/nervousness.
-        High pitch_std + high energy → higher strain.
-        Typical interview ranges:
-          pitch_std  : 0–80 Hz   (calm → nervous)
-          energy_mean: 0–0.1     (quiet → loud/tense)
+        Strain score (0-100): weighted proxy for vocal stress/nervousness,
+        derived from the pretrained SER model's output (wav2vec2, IEMOCAP-trained).
+
+        Model label set is fixed to {neutral, happy, sad, angry} — there is no
+        "nervous" or "fear" class available, so "angry" and "sad" are used as
+        the closest available proxies (elevated arousal / withdrawal),
+        with "angry" weighted higher as the stronger stress signal.
+
+        NOTE: this is a heuristic combination of model outputs, not a
+        validated clinical or psychological stress measure. Should be
+        framed in reports as an indicative vocal-delivery signal only.
         """
-        pitch_norm  = min(tone_features["pitch_std"]  / 80.0,  1.0)
-        energy_norm = min(tone_features["energy_mean"] / 0.1,  1.0)
-        return round((pitch_norm * 0.6 + energy_norm * 0.4) * 100, 2)
+        stress_weights = {
+            "angry": 0.7,
+            "sad":   0.3,
+        }
+        strain = sum(
+            emotion_scores.get(label, 0.0) * weight
+            for label, weight in stress_weights.items()
+        )
+        return round(strain * 100, 2)

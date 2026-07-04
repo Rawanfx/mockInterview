@@ -36,7 +36,6 @@ BROW_TENSION_BLENDSHAPES = [
     "browInnerUp",    # worry / nervousness
 ]
 
-# Fingertip indices only (more accurate than palm centroid)
 FINGERTIP_INDICES = [4, 8, 12, 16, 20]
 
 
