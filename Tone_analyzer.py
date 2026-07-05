@@ -67,7 +67,6 @@ class ToneAnalyzer:
 
             tone_features = self._extract_tone_features(y, sr)
             emotion_result = self._classify_emotion_chunked(y, sr)
-            strain_score  = self._calculate_strain(emotion_result["emotion_scores"])
 
             return ToneResult(
                 success=True,
@@ -77,7 +76,6 @@ class ToneAnalyzer:
                 pitch_std=tone_features["pitch_std"],
                 energy_mean=tone_features["energy_mean"],
                 speaking_rate=tone_features["speaking_rate"],
-                strain_score=strain_score,
             )
 
         except Exception as e:
@@ -191,26 +189,4 @@ class ToneAnalyzer:
             "emotion_scores":   emotion_scores,
         }
 
-    def _calculate_strain(self, emotion_scores: dict) -> float:
-        """
-        Strain score (0-100): weighted proxy for vocal stress/nervousness,
-        derived from the pretrained SER model's output (wav2vec2, IEMOCAP-trained).
-
-        Model label set is fixed to {neutral, happy, sad, angry} — there is no
-        "nervous" or "fear" class available, so "angry" and "sad" are used as
-        the closest available proxies (elevated arousal / withdrawal),
-        with "angry" weighted higher as the stronger stress signal.
-
-        NOTE: this is a heuristic combination of model outputs, not a
-        validated clinical or psychological stress measure. Should be
-        framed in reports as an indicative vocal-delivery signal only.
-        """
-        stress_weights = {
-            "angry": 0.7,
-            "sad":   0.3,
-        }
-        strain = sum(
-            emotion_scores.get(label, 0.0) * weight
-            for label, weight in stress_weights.items()
-        )
-        return round(strain * 100, 2)
+    

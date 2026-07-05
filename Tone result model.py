@@ -16,5 +16,3 @@ class ToneResult(BaseModel):
     energy_mean: float      # RMS — loudness proxy
     speaking_rate: float    # voiced frames/sec
 
-    # Composite
-    strain_score: float     # 0–100, higher = more vocal stress
